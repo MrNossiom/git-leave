@@ -122,14 +122,35 @@ fn main() {
 			});
 	}
 
-	return;
-
-	#[allow(unreachable_code)]
 	// If there is ahead branches and that user decided to push commits, then push to remote.
 	if !repos_with_ahead_branches.is_empty()
 		&& (args.push || ask("Push commits to remote?", AskDefault::Yes))
 	{
 		println_label(OutputLabel::Success("Pushing"), "commits to remote");
-		// TODO: implement
+		for (repo, _) in &repos_with_ahead_branches {
+			let repo_name = Paint::yellow(
+				repo.path()
+					.parent()
+					.unwrap()
+					.file_name()
+					.unwrap()
+					.to_str()
+					.unwrap(),
+			);
+
+			match find_remote_and_push(repo) {
+				Ok(_) => println_label(
+					OutputLabel::Info("Pushed"),
+					format!("commits of {} to remote", repo_name),
+				),
+				Err(error) => {
+					println_label(
+						OutputLabel::Error,
+						format!("cannot push commits to remote for repo {}", repo_name),
+					);
+					dbg!(error);
+				}
+			}
+		}
 	}
 }

@@ -1,6 +1,8 @@
 use crate::log::{println_label, OutputLabel};
-use git2::{Branch, BranchType, Repository, Status};
-use std::path::Path;
+use git2::{
+	Branch, BranchType, Cred, Error as GitError, PushOptions, RemoteCallbacks, Repository, Status,
+};
+use std::io::{stdout, Write};
 
 pub fn is_repo_dirty(repo: &Repository) -> bool {
 	let mut dirty = false;
@@ -63,9 +65,70 @@ pub fn find_ahead_branches_in_repo(repo: &Repository) -> Vec<Branch> {
 	ahead_branches
 }
 
-/// Get the project name from various sources (cargo.toml, package.json, etc.) fallback to folder name
-pub fn _get_project_name(_path: &Path) -> Option<String> {
-	// TODO: implement
+pub fn find_remote_and_push(repo: &Repository) -> Result<(), GitError> {
+	let mut remote_callbacks = RemoteCallbacks::new();
+	remote_callbacks.credentials(|_url, username_from_url, _allowed_types| {
+		Cred::ssh_key(
+			username_from_url.unwrap(),
+			None,
+			std::path::Path::new(&format!("{}/.ssh/id_rsa", env!("HOME"))),
+			None,
+		)
+	});
 
-	None
+	remote_callbacks.sideband_progress(|data| {
+		print!("remote: {}", std::str::from_utf8(data).unwrap());
+		stdout().flush().unwrap();
+		true
+	});
+
+	remote_callbacks.transfer_progress(|stats| {
+		if stats.received_objects() == stats.total_objects() {
+			print!(
+				"Resolving deltas {}/{}\r",
+				stats.indexed_deltas(),
+				stats.total_deltas()
+			);
+		} else if stats.total_objects() > 0 {
+			print!(
+				"Received {}/{} objects ({}) in {} bytes\r",
+				stats.received_objects(),
+				stats.total_objects(),
+				stats.indexed_objects(),
+				stats.received_bytes()
+			);
+		}
+		stdout().flush().unwrap();
+		true
+	});
+
+	remote_callbacks.update_tips(|ref_name, a, b| {
+		if a.is_zero() {
+			println!("[new]     {:20} {}", b, ref_name);
+		} else {
+			println!("[updated] {:10}..{:10} {}", a, b, ref_name);
+		}
+		true
+	});
+
+	let mut remote = match repo.find_remote("origin") {
+		Ok(remote) => remote,
+		Err(_) => {
+			println_label(
+				OutputLabel::Warning,
+				format!(
+					"No remote named origin found in {}",
+					repo.path().parent().unwrap().to_str().unwrap()
+				),
+			);
+
+			repo.find_remote(repo.remotes().unwrap().iter().next().unwrap().unwrap())
+				.unwrap()
+		}
+	};
+
+	let mut push_options = PushOptions::new();
+	push_options.remote_callbacks(remote_callbacks);
+
+	remote.push(&[] as &[&str], Some(&mut push_options))
 }
